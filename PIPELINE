@@ -1,0 +1,29 @@
+FAST5=./fast5														#PATH TO FAST5-FILES
+WORK_DIR=./fastq_folder												#PATH TO FASTQ-FILES
+REF=./S_tuberosum_Group_Tuberosum_chloroplast_RH89-039-16.fasta		#PATH TO REFERENCE PLASTID GENOME
+OUT_DIR=./output													#PATH TO OUTPUT-FILES
+
+#BASECALLING
+guppy_basecaller --disable_qscore_filtering -i $FAST5 -s $WORK_DIR/ -c dna_r9.4.1_450bps_hac.cfg -x "cuda:0:100%" --compress_fastq --chunks_per_caller 2048 --gpu_runners_per_device 8 --num_callers 4
+
+#MERGE ALL BASECALLED FASTQ-FILES TO ONE
+cat $WORK_DIR/*fastq.gz > $WORK_DIR/allfastq.fastq.gz
+
+#FILTERING
+conda activate nanofilt
+gunzip -c $WORK_DIR/allfastq.fastq.gz | NanoFilt -q 7 -l 6000 --headcrop 40 --tailcrop 40 | gzip > filltred_fastq.fastq.gz
+
+#EXTRACTING PLASTID RELATED FASTQ-FILES
+#alignment to plastid genome
+conda activate pore
+ngmlr -t 8 -i 0.90 -r $REF -q $WORK_DIR/filltred_fastq.fastq.gz -o $OUT_DIR/plastid.sam -x ont
+#transformation SAM to BAM
+conda activate samtools9
+samtools view -b -F 4 $WORK_DIR/chloroplast.sam > $WORK_DIR/chloroplast.bam
+#transformation BAM to FASTQ
+conda activate nanosv
+bamToFastq -i $WORK_DIR/chloroplast.bam -fq $WORK_DIR/chloroplast.fq
+#remove duplicates
+conda activate sekqit
+seqkit rmdup $WORK_DIR/chloroplast.fq -o $WORK_DIR/chloroplast_unduplicated.fq
+mv $WORK_DIR/chloroplast_unduplicated.fq $WORK_DIR/chloroplast.fq
